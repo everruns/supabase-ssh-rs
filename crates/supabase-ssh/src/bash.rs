@@ -1,9 +1,8 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use bashkit::{Bash, ExecutionLimits, InMemoryFs, MountableFs, OverlayFs};
+use bashkit::{Bash, ExecutionLimits};
 
 const INSTRUCTIONS: &str = r#"```bash
 # Search for a topic
@@ -116,23 +115,16 @@ fn execution_limits() -> ExecutionLimits {
 }
 
 /// Creates a sandboxed Bash instance with docs mounted at /supabase/docs.
-pub async fn create_bash(_docs_dir: &Path) -> Result<Bash> {
-    // Create the base in-memory filesystem with initial files
-    let base = InMemoryFs::new();
-    base.add_file("/supabase/AGENTS.md", agents_md().as_bytes(), 0o644);
-    base.add_file("/supabase/SKILL.md", skill_md().as_bytes(), 0o644);
-    base.add_file("/supabase/SETUP.md", SETUP_MD.as_bytes(), 0o644);
-
-    // Create an overlay of the real docs directory for read-only access
-    let docs_lower = InMemoryFs::new();
-    let docs_overlay = Arc::new(OverlayFs::new(Arc::new(docs_lower)));
-
-    // Create a mountable filesystem with the base and mount docs
-    let mountable = Arc::new(MountableFs::new(Arc::new(base)));
-    mountable.mount("/supabase/docs", docs_overlay)?;
+///
+/// Uses bashkit's `realfs` feature to mount the host docs directory as read-only
+/// at `/supabase/docs`. The in-memory layer holds AGENTS.md, SKILL.md, SETUP.md
+/// and receives any writes (which will fail since the sandbox rejects them).
+pub async fn create_bash(docs_dir: &Path) -> Result<Bash> {
+    let docs_dir_str = docs_dir.to_string_lossy();
 
     let mut bash = Bash::builder()
-        .fs(mountable)
+        // Mount the real docs directory read-only at /supabase/docs
+        .mount_real_readonly_at(&*docs_dir_str, "/supabase/docs")
         .cwd("/supabase")
         .env("HOME", "/supabase")
         .env("BASH_ALIAS_ll", "ls -alF")
@@ -143,6 +135,23 @@ pub async fn create_bash(_docs_dir: &Path) -> Result<Bash> {
         .env("BASH_ALIAS_setup", "cat /supabase/SETUP.md")
         .limits(execution_limits())
         .build();
+
+    // Write virtual files into the in-memory layer
+    bash.exec(&format!(
+        "mkdir -p /supabase && cat > /supabase/AGENTS.md << 'AGENTS_EOF'\n{}\nAGENTS_EOF",
+        agents_md()
+    ))
+    .await?;
+    bash.exec(&format!(
+        "cat > /supabase/SKILL.md << 'SKILL_EOF'\n{}\nSKILL_EOF",
+        skill_md()
+    ))
+    .await?;
+    bash.exec(&format!(
+        "cat > /supabase/SETUP.md << 'SETUP_EOF'\n{}\nSETUP_EOF",
+        SETUP_MD
+    ))
+    .await?;
 
     // Enable alias expansion
     bash.exec("shopt -s expand_aliases").await?;

@@ -1,8 +1,3 @@
-mod bash;
-mod cache;
-mod session;
-mod ssh;
-
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -10,8 +5,8 @@ use russh::keys::{Algorithm, HashAlg, PrivateKey};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use crate::bash::default_docs_dir;
-use crate::ssh::{SshServerConfig, run_server};
+use supabase_ssh::bash::default_docs_dir;
+use supabase_ssh::ssh::{SshServerConfig, run_server};
 
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
     std::env::var(key)

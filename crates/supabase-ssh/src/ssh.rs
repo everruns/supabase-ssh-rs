@@ -78,6 +78,7 @@ pub struct SshServerConfig {
 struct SharedState {
     cache: Option<CommandCache>,
     docs_dir: PathBuf,
+    session_timeout_secs: u64,
     max_connections: usize,
     max_connections_per_ip: usize,
     /// Track active connections per IP.
@@ -105,6 +106,7 @@ impl SshServer {
             state: Arc::new(Mutex::new(SharedState {
                 cache,
                 docs_dir: config.docs_dir.clone(),
+                session_timeout_secs: config.session_timeout_secs,
                 max_connections: config.max_connections,
                 max_connections_per_ip: config.max_connections_per_ip,
                 connections: HashMap::new(),
@@ -313,9 +315,9 @@ impl Handler for SshHandler {
         let (line_tx, line_rx) = mpsc::channel::<String>(32);
         self.shell_line_tx = Some(line_tx);
 
-        let docs_dir = {
+        let (docs_dir, session_timeout_secs) = {
             let state = self.state.lock().await;
-            state.docs_dir.clone()
+            (state.docs_dir.clone(), state.session_timeout_secs)
         };
 
         let mut handle = session.handle();
@@ -333,11 +335,32 @@ impl Handler for SshHandler {
                 }
             };
 
-            if let Err(e) =
-                run_shell_session(&mut bash, channel, &mut handle, line_rx, &banner_text, prompt)
-                    .await
-            {
-                warn!(error = %e, "shell session error");
+            let session_future = run_shell_session(
+                &mut bash,
+                channel,
+                &mut handle,
+                line_rx,
+                &banner_text,
+                prompt,
+            );
+
+            // Enforce max session timeout
+            let timeout_duration =
+                std::time::Duration::from_secs(session_timeout_secs);
+            match tokio::time::timeout(timeout_duration, session_future).await {
+                Ok(Err(e)) => {
+                    warn!(error = %e, "shell session error");
+                }
+                Err(_elapsed) => {
+                    let green = "\x1b[38;2;62;207;142m";
+                    let reset = "\x1b[0m";
+                    let msg = format!(
+                        "\r\n\r\n{green}Session timed out. Reconnect by running: ssh supabase.sh{reset}\r\n\r\n"
+                    );
+                    let _ = handle.data(channel, to_bytes(msg.as_bytes())).await;
+                    info!("shell session timed out after {}s", session_timeout_secs);
+                }
+                Ok(Ok(())) => {}
             }
 
             let _ = handle.eof(channel).await;

@@ -209,6 +209,98 @@ async fn exec_failing_command_returns_nonzero_exit() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 4: Real docs mounted via realfs, read via bashkit
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn exec_cat_doc_from_realfs_mount() {
+    use std::io::Write;
+
+    // Create a temp dir with a doc file
+    let tmp = tempfile::tempdir().unwrap();
+    let doc_path = tmp.path().join("test-guide.md");
+    let mut f = std::fs::File::create(&doc_path).unwrap();
+    writeln!(f, "# Test Guide\n\nThis is a test document.").unwrap();
+    drop(f);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+
+    let host_key =
+        PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
+
+    let config = Arc::new(russh::server::Config {
+        server_id: russh::SshId::Standard("SSH-2.0-test-realfs".into()),
+        keys: vec![host_key],
+        inactivity_timeout: Some(Duration::from_secs(10)),
+        ..Default::default()
+    });
+
+    let docs_dir = tmp.path().to_path_buf();
+    let server_config = config.clone();
+    let server_handle = tokio::spawn(async move {
+        let mut server = RealFsServer { docs_dir };
+        let _ = server.run_on_address(server_config, addr).await;
+    });
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let client_config = Arc::new(russh::client::Config::default());
+    let mut session = timeout(
+        Duration::from_secs(5),
+        russh::client::connect(client_config, addr, TestClient),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    session.authenticate_none("user").await.unwrap();
+
+    let mut channel = session.channel_open_session().await.unwrap();
+    channel
+        .exec(true, "cat /supabase/docs/test-guide.md")
+        .await
+        .unwrap();
+
+    let mut stdout = String::new();
+    let mut exit_code: Option<u32> = None;
+
+    let _ = timeout(Duration::from_secs(10), async {
+        loop {
+            match channel.wait().await {
+                Some(russh::ChannelMsg::Data { data }) => {
+                    stdout.push_str(&String::from_utf8_lossy(&data));
+                }
+                Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                    exit_code = Some(exit_status);
+                }
+                Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) => break,
+                None => break,
+                _ => {}
+            }
+        }
+    })
+    .await;
+
+    assert_eq!(exit_code, Some(0), "cat should succeed");
+    assert!(
+        stdout.contains("Test Guide"),
+        "should contain doc content, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("This is a test document."),
+        "should contain full doc body, got: {stdout:?}"
+    );
+
+    session
+        .disconnect(russh::Disconnect::ByApplication, "", "")
+        .await
+        .ok();
+    server_handle.abort();
+}
+
+// ---------------------------------------------------------------------------
 // Helpers: minimal server/client impls
 // ---------------------------------------------------------------------------
 
@@ -271,6 +363,66 @@ impl russh::server::Handler for BashHandler {
         session.channel_success(channel)?;
 
         let mut bash = bashkit::Bash::builder().cwd("/").build();
+        let result = bash.exec(&command).await?;
+
+        if !result.stdout.is_empty() {
+            session.data(channel, bytes::Bytes::from(result.stdout.into_bytes()))?;
+        }
+        if !result.stderr.is_empty() {
+            session.extended_data(channel, 1, bytes::Bytes::from(result.stderr.into_bytes()))?;
+        }
+        session.exit_status_request(channel, result.exit_code as u32)?;
+        session.eof(channel)?;
+        session.close(channel)?;
+
+        Ok(())
+    }
+}
+
+/// Server that uses the real create_bash with realfs docs mount.
+struct RealFsServer {
+    docs_dir: std::path::PathBuf,
+}
+
+impl Server for RealFsServer {
+    type Handler = RealFsHandler;
+
+    fn new_client(&mut self, _peer_addr: Option<SocketAddr>) -> Self::Handler {
+        RealFsHandler {
+            docs_dir: self.docs_dir.clone(),
+        }
+    }
+}
+
+struct RealFsHandler {
+    docs_dir: std::path::PathBuf,
+}
+
+impl russh::server::Handler for RealFsHandler {
+    type Error = anyhow::Error;
+
+    async fn auth_none(&mut self, _user: &str) -> Result<russh::server::Auth, Self::Error> {
+        Ok(russh::server::Auth::Accept)
+    }
+
+    async fn channel_open_session(
+        &mut self,
+        _channel: russh::Channel<russh::server::Msg>,
+        _session: &mut russh::server::Session,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+
+    async fn exec_request(
+        &mut self,
+        channel: russh::ChannelId,
+        data: &[u8],
+        session: &mut russh::server::Session,
+    ) -> Result<(), Self::Error> {
+        let command = String::from_utf8_lossy(data).to_string();
+        session.channel_success(channel)?;
+
+        let mut bash = supabase_ssh::bash::create_bash(&self.docs_dir).await?;
         let result = bash.exec(&command).await?;
 
         if !result.stdout.is_empty() {
