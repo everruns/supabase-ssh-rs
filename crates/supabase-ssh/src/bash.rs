@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
-use bashkit::{Bash, ExecutionLimits};
+use bashkit::{Bash, ExecutionLimits, MemoryLimits, SessionLimits};
 
 const INSTRUCTIONS: &str = r#"```bash
 # Search for a topic
@@ -108,10 +108,25 @@ fn execution_limits() -> ExecutionLimits {
     ExecutionLimits::new()
         .max_commands(1000)
         .max_loop_iterations(1000)
+        .max_total_loop_iterations(10_000)
         .max_function_depth(50)
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(10))
+        .max_input_bytes(1024 * 1024) // 1MB max script input
         .max_stdout_bytes(1024 * 1024)
         .max_stderr_bytes(1024 * 1024)
+}
+
+fn session_limits() -> SessionLimits {
+    SessionLimits::new()
+        .max_total_commands(10_000)
+        .max_exec_calls(500)
+}
+
+fn memory_limits() -> MemoryLimits {
+    MemoryLimits::new()
+        .max_array_entries(10_000)
+        .max_variable_count(5_000)
+        .max_total_variable_bytes(1024 * 1024) // 1MB total variable storage
 }
 
 /// Creates a sandboxed Bash instance with docs mounted at /supabase/docs.
@@ -134,6 +149,8 @@ pub async fn create_bash(docs_dir: &Path) -> Result<Bash> {
         .env("BASH_ALIAS_skill", "echo && cat /supabase/SKILL.md")
         .env("BASH_ALIAS_setup", "cat /supabase/SETUP.md")
         .limits(execution_limits())
+        .session_limits(session_limits())
+        .memory_limits(memory_limits())
         .build();
 
     // Write virtual files into the in-memory layer

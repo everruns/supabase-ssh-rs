@@ -168,10 +168,10 @@ impl Drop for SshHandler {
     }
 }
 
-impl Handler for SshHandler {
-    type Error = anyhow::Error;
-
-    async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
+impl SshHandler {
+    /// Check connection limits and register the connection if accepted.
+    /// All auth methods go through this single gate.
+    async fn check_limits_and_accept(&mut self) -> Result<Auth> {
         let mut state = self.state.lock().await;
 
         // Check capacity
@@ -208,9 +208,17 @@ impl Handler for SshHandler {
         state.total_connections += 1;
         Ok(Auth::Accept)
     }
+}
+
+impl Handler for SshHandler {
+    type Error = anyhow::Error;
+
+    async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
+        self.check_limits_and_accept().await
+    }
 
     async fn auth_password(&mut self, _user: &str, _password: &str) -> Result<Auth, Self::Error> {
-        Ok(Auth::Accept)
+        self.check_limits_and_accept().await
     }
 
     async fn auth_publickey(
@@ -218,7 +226,7 @@ impl Handler for SshHandler {
         _user: &str,
         _public_key: &PublicKey,
     ) -> Result<Auth, Self::Error> {
-        Ok(Auth::Accept)
+        self.check_limits_and_accept().await
     }
 
     async fn channel_open_session(
@@ -276,11 +284,20 @@ impl Handler for SshHandler {
             };
 
             let mut bash = create_bash(&docs_dir).await?;
-            let exec_result = bash.exec(&command).await?;
-            let result = CachedResult {
-                stdout: exec_result.stdout.clone(),
-                stderr: exec_result.stderr.clone(),
-                exit_code: exec_result.exit_code,
+            let result = match bash.exec(&command).await {
+                Ok(exec_result) => CachedResult {
+                    stdout: exec_result.stdout.clone(),
+                    stderr: exec_result.stderr.clone(),
+                    exit_code: exec_result.exit_code,
+                },
+                Err(e) => {
+                    // Resource limits, timeouts, etc. — return as stderr
+                    CachedResult {
+                        stdout: String::new(),
+                        stderr: format!("Error: {e}\n"),
+                        exit_code: 1,
+                    }
+                }
             };
 
             // Store in cache

@@ -2543,6 +2543,7 @@ dependencies = [
  "anyhow",
  "bashkit",
  "bytes",
+ "futures",
  "lru",
  "russh",
  "tempfile",
