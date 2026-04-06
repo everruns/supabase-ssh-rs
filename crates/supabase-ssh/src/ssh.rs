@@ -82,6 +82,7 @@ pub struct SshServerConfig {
 struct SharedState {
     cache: Option<CommandCache>,
     docs_dir: PathBuf,
+    idle_timeout_secs: u64,
     session_timeout_secs: u64,
     soft_limit: usize,
     hard_limit: usize,
@@ -111,6 +112,7 @@ impl SshServer {
             state: Arc::new(Mutex::new(SharedState {
                 cache,
                 docs_dir: config.docs_dir.clone(),
+                idle_timeout_secs: config.idle_timeout_secs,
                 session_timeout_secs: config.session_timeout_secs,
                 soft_limit: config.soft_limit,
                 hard_limit: config.hard_limit,
@@ -135,6 +137,7 @@ impl Server for SshServer {
             shell_task: None,
             line_editor: LineEditor::new(),
             session_start: Instant::now(),
+            last_activity: Arc::new(Mutex::new(Instant::now())),
         }
     }
 }
@@ -148,6 +151,8 @@ pub struct SshHandler {
     shell_task: Option<tokio::task::JoinHandle<()>>,
     line_editor: LineEditor,
     session_start: Instant,
+    /// Shared last-activity timestamp for idle timeout (shell mode).
+    last_activity: Arc<Mutex<Instant>>,
 }
 
 impl Drop for SshHandler {
@@ -351,13 +356,41 @@ impl Handler for SshHandler {
         let (line_tx, line_rx) = mpsc::channel::<String>(32);
         self.shell_line_tx = Some(line_tx);
 
-        let (docs_dir, session_timeout_secs) = {
+        let (docs_dir, idle_timeout_secs, session_timeout_secs) = {
             let state = self.state.lock().await;
-            (state.docs_dir.clone(), state.session_timeout_secs)
+            (
+                state.docs_dir.clone(),
+                state.idle_timeout_secs,
+                state.session_timeout_secs,
+            )
         };
 
         let mut handle = session.handle();
         let banner_text = banner();
+        let last_activity = self.last_activity.clone();
+
+        // Spawn an idle watcher that closes the channel if no data arrives
+        let idle_handle = handle.clone();
+        let idle_activity = last_activity.clone();
+        let idle_watcher = tokio::spawn(async move {
+            let idle_duration = std::time::Duration::from_secs(idle_timeout_secs);
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let last = *idle_activity.lock().await;
+                if last.elapsed() >= idle_duration {
+                    let green = "\x1b[38;2;62;207;142m";
+                    let reset = "\x1b[0m";
+                    let msg = format!(
+                        "\r\n\r\n{green}Session timed out. Reconnect by running: ssh supabase.sh{reset}\r\n\r\n"
+                    );
+                    let _ = idle_handle.data(channel, to_bytes(msg.as_bytes())).await;
+                    info!("shell session idle timeout after {}s", idle_timeout_secs);
+                    let _ = idle_handle.eof(channel).await;
+                    let _ = idle_handle.close(channel).await;
+                    return;
+                }
+            }
+        });
 
         self.shell_task = Some(tokio::spawn(async move {
             let mut bash = match create_bash(&docs_dir).await {
@@ -401,6 +434,7 @@ impl Handler for SshHandler {
 
             let _ = handle.eof(channel).await;
             let _ = handle.close(channel).await;
+            idle_watcher.abort();
         }));
 
         Ok(())
@@ -413,6 +447,9 @@ impl Handler for SshHandler {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         if let Some(tx) = &self.shell_line_tx {
+            // Reset idle timer on any data from client
+            *self.last_activity.lock().await = Instant::now();
+
             for &byte in data {
                 match self.line_editor.feed(byte) {
                     LineEvent::Line(line) => {
@@ -454,7 +491,7 @@ impl Handler for SshHandler {
     }
 }
 
-/// Run the SSH server.
+/// Run the SSH server with graceful shutdown on SIGTERM/SIGINT.
 pub async fn run_server(config: SshServerConfig) -> Result<()> {
     let version = std::env::var("VERSION").unwrap_or_else(|_| "dev".to_string());
     let server_id = format!("SSH-2.0-supabase-ssh_{version}");
@@ -470,9 +507,42 @@ pub async fn run_server(config: SshServerConfig) -> Result<()> {
     let mut server = SshServer::new(&config);
 
     info!(port = port, "SSH server listening");
-    server
-        .run_on_address(Arc::new(russh_config), ("0.0.0.0", port))
-        .await?;
+
+    // Run the server and listen for shutdown signals concurrently
+    tokio::select! {
+        result = server.run_on_address(Arc::new(russh_config), ("0.0.0.0", port)) => {
+            result?;
+        }
+        _ = shutdown_signal() => {
+            info!("shutdown signal received, draining connections");
+            // russh will drop all handlers, triggering Drop which decrements counts.
+            // Give in-flight commands a moment to finish.
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            info!("shutdown complete");
+        }
+    }
 
     Ok(())
+}
+
+/// Wait for SIGTERM or SIGINT (Ctrl+C).
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => { info!("SIGINT received"); }
+            _ = sigterm.recv() => { info!("SIGTERM received"); }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await.expect("failed to listen for ctrl_c");
+        info!("SIGINT received");
+    }
 }

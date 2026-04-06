@@ -2,7 +2,33 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
-use bashkit::{Bash, ExecutionLimits, MemoryLimits, SessionLimits};
+use bashkit::{
+    async_trait, Bash, Builtin, BuiltinContext, ExecResult, ExecutionLimits, MemoryLimits,
+    SessionLimits,
+};
+
+/// Custom `ssh` command that blocks SSH from within the sandbox.
+struct SshBlocker;
+
+#[async_trait]
+impl Builtin for SshBlocker {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let cmd = ctx.args.join(" ");
+        let hint = if cmd == "supabase.sh agents" {
+            " >> AGENTS.md"
+        } else {
+            ""
+        };
+        Ok(ExecResult::err(
+            format!(
+                "ssh is not available from within this session.\n\
+                 Exit first, then run:\n\n\
+                   ssh {cmd}{hint}\n\n"
+            ),
+            1,
+        ))
+    }
+}
 
 const INSTRUCTIONS: &str = r#"```bash
 # Search for a topic
@@ -148,6 +174,7 @@ pub async fn create_bash(docs_dir: &Path) -> Result<Bash> {
         .env("BASH_ALIAS_agents", "echo && cat /supabase/AGENTS.md")
         .env("BASH_ALIAS_skill", "echo && cat /supabase/SKILL.md")
         .env("BASH_ALIAS_setup", "cat /supabase/SETUP.md")
+        .builtin("ssh", Box::new(SshBlocker))
         .limits(execution_limits())
         .session_limits(session_limits())
         .memory_limits(memory_limits())
