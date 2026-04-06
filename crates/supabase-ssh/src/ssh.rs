@@ -14,6 +14,7 @@ use tracing::{info, warn};
 
 use crate::bash::create_bash;
 use crate::cache::{CachedResult, CommandCache};
+use crate::line_editor::{LineEditor, LineEvent};
 use crate::session::run_shell_session;
 
 const LOGO: &str = "\
@@ -127,7 +128,7 @@ impl Server for SshServer {
             has_pty: false,
             shell_line_tx: None,
             shell_task: None,
-            line_buffer: Vec::new(),
+            line_editor: LineEditor::new(),
             session_start: Instant::now(),
         }
     }
@@ -140,7 +141,7 @@ pub struct SshHandler {
     has_pty: bool,
     shell_line_tx: Option<mpsc::Sender<String>>,
     shell_task: Option<tokio::task::JoinHandle<()>>,
-    line_buffer: Vec<u8>,
+    line_editor: LineEditor,
     session_start: Instant,
 }
 
@@ -378,41 +379,28 @@ impl Handler for SshHandler {
     ) -> Result<(), Self::Error> {
         if let Some(tx) = &self.shell_line_tx {
             for &byte in data {
-                match byte {
-                    // Enter key
-                    b'\r' | b'\n' => {
-                        let line = String::from_utf8_lossy(&self.line_buffer).to_string();
-                        self.line_buffer.clear();
+                match self.line_editor.feed(byte) {
+                    LineEvent::Line(line) => {
+                        // Echo the newline
                         session.data(channel, to_bytes(b"\r\n"))?;
+                        // Send Ctrl+C prompt re-display or the line to the shell task
                         let _ = tx.send(line).await;
                     }
-                    // Backspace / DEL
-                    0x7f | 0x08 => {
-                        if !self.line_buffer.is_empty() {
-                            self.line_buffer.pop();
-                            session.data(channel, to_bytes(b"\x08 \x08"))?;
+                    LineEvent::Eof => {
+                        let _ = tx.send("exit".to_string()).await;
+                    }
+                    LineEvent::Echo(bytes) => {
+                        if !bytes.is_empty() {
+                            session.data(channel, to_bytes(&bytes))?;
+                            // If this was Ctrl+C, also re-send the prompt
+                            if byte == 0x03 {
+                                let prompt_str = prompt("supabase");
+                                session
+                                    .data(channel, to_bytes(prompt_str.as_bytes()))?;
+                            }
                         }
                     }
-                    // Ctrl+C
-                    0x03 => {
-                        self.line_buffer.clear();
-                        session.data(channel, to_bytes(b"^C\r\n"))?;
-                        let green = "\x1b[38;2;62;207;142m";
-                        let reset = "\x1b[0m";
-                        let prompt_str = format!("{green}supabase{reset} $ ");
-                        session.data(channel, to_bytes(prompt_str.as_bytes()))?;
-                    }
-                    // Ctrl+D (EOF)
-                    0x04 => {
-                        if self.line_buffer.is_empty() {
-                            let _ = tx.send("exit".to_string()).await;
-                        }
-                    }
-                    // Regular character
-                    _ => {
-                        self.line_buffer.push(byte);
-                        session.data(channel, to_bytes(&[byte]))?;
-                    }
+                    LineEvent::None => {}
                 }
             }
         }
