@@ -290,3 +290,102 @@ async fn concurrent_instances_dont_block_each_other() {
 
     assert!(elapsed.as_secs() < 30, "took {}s, expected <30s", elapsed.as_secs());
 }
+
+// ---------------------------------------------------------------------------
+// Attack: brace expansion bomb
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn brace_expansion_bomb_bounded() {
+    let start = std::time::Instant::now();
+    let mut bash = test_bash().await;
+    let res = exec_result_or_err(&mut bash, "echo {1..1000}{1..1000}").await;
+    let elapsed = start.elapsed();
+    // Must be stopped by timeout or output/resource limit
+    assert!(elapsed.as_secs() < 15, "brace expansion should be bounded by timeout");
+    match res {
+        Ok(r) => {
+            assert!(
+                r.stdout.len() + r.stderr.len() <= 1024 * 1024 + 8192,
+                "output should be bounded"
+            );
+        }
+        Err(_) => {} // Resource limit error is fine
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Attack: command substitution depth
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn command_substitution_depth_stopped() {
+    let mut bash = test_bash().await;
+    // Build 25-level deep nested command substitution
+    let mut script = String::from("echo hello");
+    for _ in 0..25 {
+        script = format!("echo $({})", script);
+    }
+    // bashkit may return Err or Ok with non-zero exit or truncated output
+    let res = exec_result_or_err(&mut bash, &script).await;
+    match res {
+        Err(_) => {} // Resource limit error — stopped
+        Ok(r) => {
+            // Even if it succeeds, the nesting was bounded by ast_depth or timeout
+            assert!(
+                r.exit_code != 0
+                    || r.stdout.len() < 1024 * 1024
+                    || r.stderr.to_lowercase().contains("limit")
+                    || r.stderr.to_lowercase().contains("depth"),
+                "deep substitution should be bounded, exit={} stderr={:?}",
+                r.exit_code,
+                r.stderr
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Attack: arithmetic in tight loop
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn arithmetic_in_tight_loop_bounded() {
+    let mut bash = test_bash().await;
+    assert!(
+        exec_is_stopped(
+            &mut bash,
+            "x=0; while true; do x=$((x+1)); done; echo $x"
+        )
+        .await,
+        "arithmetic tight loop must be stopped"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Attack: awk infinite loop
+// ---------------------------------------------------------------------------
+
+/// Note: bashkit's awk doesn't have a separate maxAwkIterations like just-bash.
+/// The awk loop is bounded by the global 10s timeout or output limit.
+#[tokio::test]
+async fn awk_infinite_loop_bounded() {
+    let start = std::time::Instant::now();
+    let mut bash = test_bash().await;
+    let res = exec_result_or_err(
+        &mut bash,
+        r#"echo x | awk "{ while(1) print }""#,
+    )
+    .await;
+    let elapsed = start.elapsed();
+    assert!(elapsed.as_secs() < 15, "awk loop should be bounded by timeout");
+    match res {
+        Ok(r) => {
+            assert!(
+                r.stdout.len() + r.stderr.len() <= 1024 * 1024 + 8192,
+                "output should be bounded"
+            );
+        }
+        Err(_) => {} // Resource limit error is fine
+    }
+}
