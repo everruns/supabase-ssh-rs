@@ -77,7 +77,8 @@ async fn main() -> Result<()> {
         idle_timeout_secs,
         session_timeout_secs,
         exec_timeout_secs,
-        max_connections,
+        soft_limit: max_connections * 80 / 100, // 80% of max
+        hard_limit: max_connections,
         max_connections_per_ip,
         cache_max_entries,
         cache_max_output_bytes,

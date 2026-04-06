@@ -68,7 +68,10 @@ pub struct SshServerConfig {
     pub idle_timeout_secs: u64,
     pub session_timeout_secs: u64,
     pub exec_timeout_secs: u64,
-    pub max_connections: usize,
+    /// Connections above this start getting probabilistically dropped.
+    pub soft_limit: usize,
+    /// All connections above this are rejected.
+    pub hard_limit: usize,
     pub max_connections_per_ip: usize,
     pub cache_max_entries: usize,
     pub cache_max_output_bytes: usize,
@@ -80,7 +83,8 @@ struct SharedState {
     cache: Option<CommandCache>,
     docs_dir: PathBuf,
     session_timeout_secs: u64,
-    max_connections: usize,
+    soft_limit: usize,
+    hard_limit: usize,
     max_connections_per_ip: usize,
     /// Track active connections per IP.
     connections: HashMap<SocketAddr, usize>,
@@ -108,7 +112,8 @@ impl SshServer {
                 cache,
                 docs_dir: config.docs_dir.clone(),
                 session_timeout_secs: config.session_timeout_secs,
-                max_connections: config.max_connections,
+                soft_limit: config.soft_limit,
+                hard_limit: config.hard_limit,
                 max_connections_per_ip: config.max_connections_per_ip,
                 connections: HashMap::new(),
                 total_connections: 0,
@@ -174,17 +179,30 @@ impl SshHandler {
     async fn check_limits_and_accept(&mut self) -> Result<Auth> {
         let mut state = self.state.lock().await;
 
-        // Check capacity
-        if state.total_connections >= state.max_connections {
-            warn!(
-                total = state.total_connections,
-                max = state.max_connections,
-                "rejecting connection: at capacity"
-            );
-            return Ok(Auth::Reject {
-                proceed_with_methods: None,
-                partial_success: false,
-            });
+        // Probabilistic capacity check: linear ramp between soft and hard limit.
+        // Below soft: always accept. Above hard: always reject.
+        // Between: drop probability increases linearly.
+        if state.total_connections >= state.soft_limit {
+            let drop_probability = if state.total_connections >= state.hard_limit {
+                1.0
+            } else {
+                (state.total_connections - state.soft_limit) as f64
+                    / (state.hard_limit - state.soft_limit) as f64
+            };
+
+            if rand::random::<f64>() < drop_probability {
+                warn!(
+                    total = state.total_connections,
+                    soft = state.soft_limit,
+                    hard = state.hard_limit,
+                    p = format!("{:.2}", drop_probability),
+                    "rejecting connection: at capacity"
+                );
+                return Ok(Auth::Reject {
+                    proceed_with_methods: None,
+                    partial_success: false,
+                });
+            }
         }
 
         // Check per-IP limit
