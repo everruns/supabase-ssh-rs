@@ -95,11 +95,11 @@ The binary is at `target/release/supabase-ssh`.
 ## Testing
 
 ```bash
-# Run all tests (use larger stack for recursion security tests)
-RUST_MIN_STACK=8388608 cargo test
+# Run all tests (16MB stack needed for recursion depth security tests)
+RUST_MIN_STACK=16777216 cargo test
 
 # Run only security tests
-RUST_MIN_STACK=8388608 cargo test --test security
+RUST_MIN_STACK=16777216 cargo test --test security
 
 # Run only integration tests (SSH protocol)
 cargo test --test integration
