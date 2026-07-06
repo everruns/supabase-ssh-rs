@@ -78,7 +78,9 @@ and feeds completed lines to bashkit. Output is streamed back over the SSH chann
 - **Read-only host mount**: Docs directory mounted via `realfs` in `ReadOnly` mode.
   Path traversal blocked by canonicalize + prefix check.
 - **Execution limits**: 1000 commands, 1000 loop iterations, 50 function depth,
-  10s timeout, 1MB output cap, 1MB variable storage, 10K array entries.
+  20 substitution/subshell depth, 100 file descriptors, 10s timeout, 1MB output
+  cap, 1MB variable storage, 10K array entries. Values mirror the original
+  TypeScript `just-bash` config where a bashkit knob exists.
 - **Connection limits**: Probabilistic soft/hard ramp (80→100), per-IP concurrency
   (10), idle timeout (60s), session timeout (600s).
 - **Custom `ssh` command**: Blocked inside sandbox with helpful error message.
@@ -94,18 +96,27 @@ The binary is at `target/release/supabase-ssh`.
 
 ## Testing
 
+47 tests across four suites:
+
+- **unit** (`--lib`): line editor + LRU cache
+- **integration** (`--test integration`): in-process russh client ↔ server handshake, exec, realfs
+- **security** (`--test security`): attack surface — resource limits, read-only FS, sandbox escapes
+- **e2e** (`--test e2e`): spawns the real `supabase-ssh` binary as a subprocess and drives it over
+  a real SSH connection (cat/grep/find docs, ssh-blocker, read-only enforcement)
+
 ```bash
-# Run all tests (16MB stack needed for recursion depth security tests)
+# Run all tests (16MB stack needed for recursion-depth security test)
 RUST_MIN_STACK=16777216 cargo test
 
-# Run only security tests
+# Individual suites
 RUST_MIN_STACK=16777216 cargo test --test security
-
-# Run only integration tests (SSH protocol)
 cargo test --test integration
-
-# Run only unit tests (line editor, cache)
+cargo test --test e2e
 cargo test --lib
+
+# Lint gate (must be clean for merge)
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
 ```
 
 ## Docker

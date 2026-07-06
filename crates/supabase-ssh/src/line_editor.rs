@@ -1,16 +1,16 @@
-/// Lightweight line editor for SSH channels.
-///
-/// Handles raw byte input from PTY clients and produces:
-/// - Completed lines (on Enter)
-/// - Echo bytes to send back to the client
-///
-/// Supports:
-/// - Cursor movement (Left/Right arrow keys, Home/End)
-/// - Command history (Up/Down arrow keys)
-/// - Backspace/Delete
-/// - Ctrl+C (cancel line), Ctrl+D (EOF), Ctrl+A (home), Ctrl+E (end)
-/// - Ctrl+U (kill line), Ctrl+K (kill to end), Ctrl+W (kill word back)
-/// - Multi-byte UTF-8
+//! Lightweight line editor for SSH channels.
+//!
+//! Handles raw byte input from PTY clients and produces:
+//! - Completed lines (on Enter)
+//! - Echo bytes to send back to the client
+//!
+//! Supports:
+//! - Cursor movement (Left/Right arrow keys, Home/End)
+//! - Command history (Up/Down arrow keys)
+//! - Backspace/Delete
+//! - Ctrl+C (cancel line), Ctrl+D (EOF), Ctrl+A (home), Ctrl+E (end)
+//! - Ctrl+U (kill line), Ctrl+K (kill to end), Ctrl+W (kill word back)
+//! - Multi-byte UTF-8
 
 /// Events produced by the line editor when processing input bytes.
 pub enum LineEvent {
@@ -41,6 +41,12 @@ pub struct LineEditor {
     in_escape: bool,
     /// Max history entries.
     max_history: usize,
+}
+
+impl Default for LineEditor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LineEditor {
@@ -78,12 +84,10 @@ impl LineEditor {
             b'\r' | b'\n' => {
                 let line: String = self.buf.iter().collect();
                 // Add to history if non-empty and different from last
-                if !line.trim().is_empty() {
-                    if self.history.last().map_or(true, |last| last != &line) {
-                        self.history.push(line.clone());
-                        if self.history.len() > self.max_history {
-                            self.history.remove(0);
-                        }
+                if !line.trim().is_empty() && self.history.last() != Some(&line) {
+                    self.history.push(line.clone());
+                    if self.history.len() > self.max_history {
+                        self.history.remove(0);
                     }
                 }
                 self.buf.clear();
@@ -196,7 +200,7 @@ impl LineEditor {
             // Regular printable character or UTF-8 lead byte
             _ => {
                 // For ASCII printable
-                if byte >= 0x20 && byte < 0x7f {
+                if (0x20..0x7f).contains(&byte) {
                     let ch = byte as char;
                     self.buf.insert(self.cursor, ch);
                     self.cursor += 1;
@@ -239,7 +243,7 @@ impl LineEditor {
         }
 
         // CSI sequences end with a letter (0x40-0x7e)
-        if byte >= 0x40 && byte <= 0x7e {
+        if (0x40..=0x7e).contains(&byte) {
             self.in_escape = false;
             let seq = self.esc_buf.clone();
             self.esc_buf.clear();

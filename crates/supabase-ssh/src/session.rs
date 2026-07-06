@@ -52,9 +52,7 @@ pub async fn run_shell_session(
                 Ok(result) => {
                     if !result.stdout.is_empty() {
                         let stdout = result.stdout.replace('\n', "\r\n");
-                        let _ = handle
-                            .data(channel_id, to_bytes(stdout.as_bytes()))
-                            .await;
+                        let _ = handle.data(channel_id, to_bytes(stdout.as_bytes())).await;
                     }
                     if !result.stderr.is_empty() {
                         let stderr = result.stderr.replace('\n', "\r\n");
@@ -81,9 +79,7 @@ pub async fn run_shell_session(
         // Update prompt with potentially changed cwd
         let cwd = bash.shell_state().cwd.to_string_lossy().to_string();
         let prompt = prompt_fn(&cwd);
-        let _ = handle
-            .data(channel_id, to_bytes(prompt.as_bytes()))
-            .await;
+        let _ = handle.data(channel_id, to_bytes(prompt.as_bytes())).await;
     }
 
     Ok(())

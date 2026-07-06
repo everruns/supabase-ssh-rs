@@ -9,7 +9,7 @@ use anyhow::Result;
 use russh::keys::{PrivateKey, PublicKey};
 use russh::server::{Auth, Handler, Msg, Server, Session};
 use russh::{Channel, ChannelId};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tracing::{info, warn};
 
 use crate::bash::create_bash;
@@ -166,12 +166,12 @@ impl Drop for SshHandler {
         tokio::spawn(async move {
             let mut s = state.lock().await;
             s.total_connections = s.total_connections.saturating_sub(1);
-            if let Some(addr) = peer {
-                if let Some(count) = s.connections.get_mut(&addr) {
-                    *count = count.saturating_sub(1);
-                    if *count == 0 {
-                        s.connections.remove(&addr);
-                    }
+            if let Some(addr) = peer
+                && let Some(count) = s.connections.get_mut(&addr)
+            {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    s.connections.remove(&addr);
                 }
             }
         });
@@ -414,8 +414,7 @@ impl Handler for SshHandler {
             );
 
             // Enforce max session timeout
-            let timeout_duration =
-                std::time::Duration::from_secs(session_timeout_secs);
+            let timeout_duration = std::time::Duration::from_secs(session_timeout_secs);
             match tokio::time::timeout(timeout_duration, session_future).await {
                 Ok(Err(e)) => {
                     warn!(error = %e, "shell session error");
@@ -467,8 +466,7 @@ impl Handler for SshHandler {
                             // If this was Ctrl+C, also re-send the prompt
                             if byte == 0x03 {
                                 let prompt_str = prompt("supabase");
-                                session
-                                    .data(channel, to_bytes(prompt_str.as_bytes()))?;
+                                session.data(channel, to_bytes(prompt_str.as_bytes()))?;
                             }
                         }
                     }
@@ -531,9 +529,8 @@ async fn shutdown_signal() {
 
     #[cfg(unix)]
     {
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("failed to register SIGTERM handler");
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
         tokio::select! {
             _ = ctrl_c => { info!("SIGINT received"); }
             _ = sigterm.recv() => { info!("SIGTERM received"); }

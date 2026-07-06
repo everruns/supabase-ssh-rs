@@ -104,10 +104,7 @@ async fn exec_echo_command_over_ssh() {
 
     // Open a channel and exec
     let mut channel = session.channel_open_session().await.expect("channel open");
-    channel
-        .exec(true, "echo hello world")
-        .await
-        .expect("exec");
+    channel.exec(true, "echo hello world").await.expect("exec");
 
     // Collect output
     let mut stdout = String::new();

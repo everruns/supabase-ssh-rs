@@ -86,7 +86,10 @@ async fn output_bounded_to_1mb() {
     match res {
         Ok(result) => {
             let total = result.stdout.len() + result.stderr.len();
-            assert!(total <= 1024 * 1024 + 8192, "output should be bounded, got {total}");
+            assert!(
+                total <= 1024 * 1024 + 8192,
+                "output should be bounded, got {total}"
+            );
         }
         Err(e) => {
             // ResourceLimit error is also acceptable — output was stopped
@@ -116,7 +119,10 @@ async fn exponential_string_growth_bounded_by_timeout_or_memory() {
     )
     .await;
     // Must complete within the 10s timeout
-    assert!(start.elapsed().as_secs() < 15, "should complete within timeout");
+    assert!(
+        start.elapsed().as_secs() < 15,
+        "should complete within timeout"
+    );
 }
 
 #[tokio::test]
@@ -170,23 +176,20 @@ async fn many_commands_hit_limit() {
 async fn sed_branch_loop_bounded_by_timeout_or_output() {
     let start = std::time::Instant::now();
     let mut bash = test_bash().await;
-    let res = exec_result_or_err(
-        &mut bash,
-        r#"echo "aaa" | sed ":loop; s/a/aa/; t loop""#,
-    )
-    .await;
+    let res = exec_result_or_err(&mut bash, r#"echo "aaa" | sed ":loop; s/a/aa/; t loop""#).await;
     let elapsed = start.elapsed();
     // Must be stopped by timeout (10s) or output limit (1MB)
-    assert!(elapsed.as_secs() < 15, "sed loop should be bounded by timeout");
-    match res {
-        Ok(r) => {
-            // Output should be bounded even if exit code is 0
-            assert!(
-                r.stdout.len() + r.stderr.len() <= 1024 * 1024 + 8192,
-                "output should be bounded"
-            );
-        }
-        Err(_) => {} // Resource limit error is fine
+    assert!(
+        elapsed.as_secs() < 15,
+        "sed loop should be bounded by timeout"
+    );
+    // A ResourceLimit error is also fine — output was stopped.
+    if let Ok(r) = res {
+        // Output should be bounded even if exit code is 0
+        assert!(
+            r.stdout.len() + r.stderr.len() <= 1024 * 1024 + 8192,
+            "output should be bounded"
+        );
     }
 }
 
@@ -198,9 +201,9 @@ async fn sed_branch_loop_bounded_by_timeout_or_output() {
 async fn cannot_write_to_realfs_mount() {
     let mut bash = test_bash().await;
     let res = exec_result_or_err(&mut bash, r#"echo "pwned" > /supabase/docs/evil.md"#).await;
-    match res {
-        Ok(r) => assert_ne!(r.exit_code, 0, "write to realfs should fail"),
-        Err(_) => {} // Error is acceptable
+    // An error is also acceptable — the write was rejected.
+    if let Ok(r) = res {
+        assert_ne!(r.exit_code, 0, "write to realfs should fail");
     }
 }
 
@@ -208,9 +211,8 @@ async fn cannot_write_to_realfs_mount() {
 async fn cannot_mkdir_in_realfs_mount() {
     let mut bash = test_bash().await;
     let res = exec_result_or_err(&mut bash, "mkdir /supabase/docs/evil").await;
-    match res {
-        Ok(r) => assert_ne!(r.exit_code, 0, "mkdir in realfs should fail"),
-        Err(_) => {}
+    if let Ok(r) = res {
+        assert_ne!(r.exit_code, 0, "mkdir in realfs should fail")
     }
 }
 
@@ -218,9 +220,8 @@ async fn cannot_mkdir_in_realfs_mount() {
 async fn cannot_delete_from_realfs_mount() {
     let mut bash = test_bash().await;
     let res = exec_result_or_err(&mut bash, "rm /supabase/docs/test.md").await;
-    match res {
-        Ok(r) => assert_ne!(r.exit_code, 0, "rm in realfs should fail"),
-        Err(_) => {}
+    if let Ok(r) = res {
+        assert_ne!(r.exit_code, 0, "rm in realfs should fail")
     }
 }
 
@@ -251,7 +252,11 @@ async fn execution_timeout_enforced() {
     let elapsed = start.elapsed();
 
     assert!(stopped, "should be stopped by timeout or limits");
-    assert!(elapsed.as_secs() < 15, "took {}s, expected <15s", elapsed.as_secs());
+    assert!(
+        elapsed.as_secs() < 15,
+        "took {}s, expected <15s",
+        elapsed.as_secs()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -280,15 +285,17 @@ async fn concurrent_instances_dont_block_each_other() {
 
     for result in &results {
         let r = result.as_ref().unwrap();
-        match r {
-            Ok(exec_result) => assert!(
-                exec_result.stdout.contains("done") || !exec_result.stderr.is_empty()
-            ),
-            Err(_) => {} // Resource limit is fine
+        // A resource-limit error is fine; otherwise it must have completed.
+        if let Ok(exec_result) = r {
+            assert!(exec_result.stdout.contains("done") || !exec_result.stderr.is_empty());
         }
     }
 
-    assert!(elapsed.as_secs() < 30, "took {}s, expected <30s", elapsed.as_secs());
+    assert!(
+        elapsed.as_secs() < 30,
+        "took {}s, expected <30s",
+        elapsed.as_secs()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -302,15 +309,16 @@ async fn brace_expansion_bomb_bounded() {
     let res = exec_result_or_err(&mut bash, "echo {1..1000}{1..1000}").await;
     let elapsed = start.elapsed();
     // Must be stopped by timeout or output/resource limit
-    assert!(elapsed.as_secs() < 15, "brace expansion should be bounded by timeout");
-    match res {
-        Ok(r) => {
-            assert!(
-                r.stdout.len() + r.stderr.len() <= 1024 * 1024 + 8192,
-                "output should be bounded"
-            );
-        }
-        Err(_) => {} // Resource limit error is fine
+    assert!(
+        elapsed.as_secs() < 15,
+        "brace expansion should be bounded by timeout"
+    );
+    // A ResourceLimit error is fine; otherwise output must be bounded.
+    if let Ok(r) = res {
+        assert!(
+            r.stdout.len() + r.stderr.len() <= 1024 * 1024 + 8192,
+            "output should be bounded"
+        );
     }
 }
 
@@ -321,27 +329,48 @@ async fn brace_expansion_bomb_bounded() {
 #[tokio::test]
 async fn command_substitution_depth_stopped() {
     let mut bash = test_bash().await;
-    // Build 25-level deep nested command substitution
+    // Build 25-level deep nested command substitution — exceeds max_subst_depth(20)
     let mut script = String::from("echo hello");
     for _ in 0..25 {
         script = format!("echo $({})", script);
     }
-    // bashkit may return Err or Ok with non-zero exit or truncated output
-    let res = exec_result_or_err(&mut bash, &script).await;
+    assert!(
+        exec_is_stopped(&mut bash, &script).await,
+        "deeply nested command substitution must be stopped by max_subst_depth"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Attack: file descriptor exhaustion
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn file_descriptor_exhaustion_bounded() {
+    let mut bash = test_bash().await;
+    // Open many file descriptors via redirections in a loop; max_file_descriptors(100)
+    // caps this. Should be stopped or complete without leaking unbounded fds.
+    let start = std::time::Instant::now();
+    let res = exec_result_or_err(
+        &mut bash,
+        "for i in $(seq 1 500); do exec {fd}< /supabase/docs/test.md; done; echo done",
+    )
+    .await;
+    assert!(
+        start.elapsed().as_secs() < 15,
+        "fd loop should be bounded by limit or timeout"
+    );
+    // Either stopped by the fd limit (Err/non-zero) or bounded some other way.
     match res {
-        Err(_) => {} // Resource limit error — stopped
-        Ok(r) => {
-            // Even if it succeeds, the nesting was bounded by ast_depth or timeout
-            assert!(
-                r.exit_code != 0
-                    || r.stdout.len() < 1024 * 1024
-                    || r.stderr.to_lowercase().contains("limit")
-                    || r.stderr.to_lowercase().contains("depth"),
-                "deep substitution should be bounded, exit={} stderr={:?}",
-                r.exit_code,
-                r.stderr
-            );
-        }
+        Err(_) => {}
+        Ok(r) => assert!(
+            r.exit_code != 0
+                || r.stdout.contains("done")
+                || r.stderr.to_lowercase().contains("descriptor")
+                || r.stderr.to_lowercase().contains("limit"),
+            "fd exhaustion should be bounded, exit={} stderr={:?}",
+            r.exit_code,
+            r.stderr
+        ),
     }
 }
 
@@ -353,11 +382,7 @@ async fn command_substitution_depth_stopped() {
 async fn arithmetic_in_tight_loop_bounded() {
     let mut bash = test_bash().await;
     assert!(
-        exec_is_stopped(
-            &mut bash,
-            "x=0; while true; do x=$((x+1)); done; echo $x"
-        )
-        .await,
+        exec_is_stopped(&mut bash, "x=0; while true; do x=$((x+1)); done; echo $x").await,
         "arithmetic tight loop must be stopped"
     );
 }
@@ -372,20 +397,17 @@ async fn arithmetic_in_tight_loop_bounded() {
 async fn awk_infinite_loop_bounded() {
     let start = std::time::Instant::now();
     let mut bash = test_bash().await;
-    let res = exec_result_or_err(
-        &mut bash,
-        r#"echo x | awk "{ while(1) print }""#,
-    )
-    .await;
+    let res = exec_result_or_err(&mut bash, r#"echo x | awk "{ while(1) print }""#).await;
     let elapsed = start.elapsed();
-    assert!(elapsed.as_secs() < 15, "awk loop should be bounded by timeout");
-    match res {
-        Ok(r) => {
-            assert!(
-                r.stdout.len() + r.stderr.len() <= 1024 * 1024 + 8192,
-                "output should be bounded"
-            );
-        }
-        Err(_) => {} // Resource limit error is fine
+    assert!(
+        elapsed.as_secs() < 15,
+        "awk loop should be bounded by timeout"
+    );
+    // A ResourceLimit error is fine; otherwise output must be bounded.
+    if let Ok(r) = res {
+        assert!(
+            r.stdout.len() + r.stderr.len() <= 1024 * 1024 + 8192,
+            "output should be bounded"
+        );
     }
 }

@@ -29,7 +29,9 @@ pub struct CommandCache {
 impl CommandCache {
     pub fn new(max_entries: usize, max_output_bytes: usize) -> Self {
         Self {
-            cache: LruCache::new(NonZeroUsize::new(max_entries).unwrap_or(NonZeroUsize::new(1000).unwrap())),
+            cache: LruCache::new(
+                NonZeroUsize::new(max_entries).unwrap_or(NonZeroUsize::new(1000).unwrap()),
+            ),
             max_output_bytes,
             hits: 0,
             misses: 0,
@@ -138,7 +140,10 @@ mod tests {
         // This should evict cmd1 (oldest / least-recently-used)
         cache.set("/home", "cmd3", result("r3", 0));
 
-        assert!(cache.get("/home", "cmd1").is_none(), "cmd1 should have been evicted");
+        assert!(
+            cache.get("/home", "cmd1").is_none(),
+            "cmd1 should have been evicted"
+        );
         assert!(cache.get("/home", "cmd2").is_some());
         assert!(cache.get("/home", "cmd3").is_some());
         assert_eq!(cache.stats().entries, 2);
@@ -156,8 +161,14 @@ mod tests {
         // Insert cmd3 — should evict cmd2 (now the LRU), not cmd1
         cache.set("/home", "cmd3", result("r3", 0));
 
-        assert!(cache.get("/home", "cmd1").is_some(), "cmd1 should still be present (was promoted)");
-        assert!(cache.get("/home", "cmd2").is_none(), "cmd2 should have been evicted");
+        assert!(
+            cache.get("/home", "cmd1").is_some(),
+            "cmd1 should still be present (was promoted)"
+        );
+        assert!(
+            cache.get("/home", "cmd2").is_none(),
+            "cmd2 should have been evicted"
+        );
         assert!(cache.get("/home", "cmd3").is_some());
     }
 
@@ -165,12 +176,19 @@ mod tests {
     fn skips_caching_output_exceeding_max_output_bytes() {
         let mut cache = CommandCache::new(10, 16);
         // stdout + stderr = 20 bytes > 16
-        cache.set("/home", "big", CachedResult {
-            stdout: "a]".repeat(10),
-            stderr: String::new(),
-            exit_code: 0,
-        });
-        assert!(cache.get("/home", "big").is_none(), "oversized output should not be cached");
+        cache.set(
+            "/home",
+            "big",
+            CachedResult {
+                stdout: "a]".repeat(10),
+                stderr: String::new(),
+                exit_code: 0,
+            },
+        );
+        assert!(
+            cache.get("/home", "big").is_none(),
+            "oversized output should not be cached"
+        );
         assert_eq!(cache.stats().entries, 0);
     }
 
@@ -184,7 +202,10 @@ mod tests {
         cache.set("/home", "cmd1", result("new", 0));
 
         assert_eq!(cache.get("/home", "cmd1").unwrap().stdout, "new");
-        assert!(cache.get("/home", "cmd2").is_some(), "cmd2 should not have been evicted");
+        assert!(
+            cache.get("/home", "cmd2").is_some(),
+            "cmd2 should not have been evicted"
+        );
         assert_eq!(cache.stats().entries, 2);
     }
 }

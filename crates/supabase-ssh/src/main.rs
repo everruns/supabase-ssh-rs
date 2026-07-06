@@ -45,9 +45,7 @@ fn load_host_key() -> Result<PrivateKey> {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive("supabase_ssh=info".parse()?),
-        )
+        .with_env_filter(EnvFilter::from_default_env().add_directive("supabase_ssh=info".parse()?))
         .init();
 
     let host_key = load_host_key()?;

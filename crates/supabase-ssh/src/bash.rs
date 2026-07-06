@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use bashkit::{
-    async_trait, Bash, Builtin, BuiltinContext, ExecResult, ExecutionLimits, MemoryLimits,
-    SessionLimits,
+    Bash, Builtin, BuiltinContext, ExecResult, ExecutionLimits, MemoryLimits, SessionLimits,
+    async_trait,
 };
 
 /// Custom `ssh` command that blocks SSH from within the sandbox.
@@ -131,15 +131,20 @@ After setup, confirm to the user what was written and where.
 "#;
 
 fn execution_limits() -> ExecutionLimits {
+    // Values mirror the original TypeScript just-bash EXECUTION_LIMITS where an
+    // equivalent bashkit knob exists.
     ExecutionLimits::new()
-        .max_commands(1000)
-        .max_loop_iterations(1000)
+        .max_commands(1000) // maxCommandCount
+        .max_loop_iterations(1000) // maxLoopIterations
         .max_total_loop_iterations(10_000)
-        .max_function_depth(50)
-        .timeout(Duration::from_secs(10))
-        .max_input_bytes(1024 * 1024) // 1MB max script input
-        .max_stdout_bytes(1024 * 1024)
-        .max_stderr_bytes(1024 * 1024)
+        .max_function_depth(50) // maxCallDepth
+        .max_subst_depth(20) // maxSubstitutionDepth
+        .max_subshell_depth(20)
+        .max_file_descriptors(100) // maxFileDescriptors
+        .timeout(Duration::from_secs(10)) // per-command execTimeout
+        .max_input_bytes(1024 * 1024) // maxHeredocSize (1MB max script input)
+        .max_stdout_bytes(1024 * 1024) // maxOutputSize
+        .max_stderr_bytes(1024 * 1024) // maxOutputSize
 }
 
 fn session_limits() -> SessionLimits {
@@ -206,5 +211,7 @@ pub async fn create_bash(docs_dir: &Path) -> Result<Bash> {
 /// Default docs directory path.
 pub fn default_docs_dir() -> PathBuf {
     let dir = std::env::var("DOCS_DIR").unwrap_or_else(|_| "./docs".to_string());
-    PathBuf::from(dir).canonicalize().unwrap_or_else(|_| PathBuf::from("./docs"))
+    PathBuf::from(dir)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from("./docs"))
 }
