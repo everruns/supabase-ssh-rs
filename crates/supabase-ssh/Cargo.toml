@@ -1,0 +1,20 @@
+[package]
+name = "supabase-ssh"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+bashkit = { version = "0.12", features = ["realfs"] }
+bytes = "1"
+lru = "0.13"
+rand = "0.9"
+russh = "0.60"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+futures = "0.3"
+tempfile = "3"
+tokio = { version = "1", features = ["full", "test-util"] }
