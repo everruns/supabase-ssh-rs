@@ -3,8 +3,14 @@
 SSH server that exposes Supabase documentation as a sandboxed virtual filesystem.
 Agents and CLI users can browse docs using familiar bash commands over SSH.
 
-Rust reimplementation using [russh](https://docs.rs/russh) for the SSH protocol
-and [bashkit](https://github.com/everruns/bashkit) for the sandboxed bash interpreter.
+Built on [**bashkit**](https://github.com/everruns/bashkit) — a fast virtual bash
+interpreter in Rust — for the sandbox, and [russh](https://docs.rs/russh) for the
+SSH protocol.
+
+![Browsing Supabase docs over SSH with bashkit](../../assets/demo.svg)
+
+> The original TypeScript version (built on [just-bash](https://github.com/vercel-labs/just-bash))
+> lives at [supabase-community/supabase-ssh](https://github.com/supabase-community/supabase-ssh).
 
 ## Quick start
 

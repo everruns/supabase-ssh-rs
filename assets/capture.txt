@@ -1,0 +1,29 @@
+<<<CMD>>>ls /supabase/docs
+guides
+reference
+<<<END>>>
+<<<CMD>>>find /supabase/docs/guides/auth -name '*.md'
+/supabase/docs/guides/auth/passwords.md
+/supabase/docs/guides/auth/rls.md
+<<<END>>>
+<<<CMD>>>grep -ril 'row level security' /supabase/docs
+/supabase/docs/guides/auth/rls.md
+<<<END>>>
+<<<CMD>>>cat /supabase/docs/guides/auth/rls.md
+# Row Level Security
+
+Supabase uses PostgreSQL Row Level Security (RLS) to control access to rows in
+a table. Enable it per table, then write policies that describe who can read or
+write which rows.
+
+```sql
+alter table profiles enable row level security;
+
+create policy "Users can view their own profile"
+  on profiles for select
+  using ( auth.uid() = user_id );
+```
+
+Every request through the Data API runs as the authenticated user, so policies
+are enforced automatically.
+<<<END>>>
