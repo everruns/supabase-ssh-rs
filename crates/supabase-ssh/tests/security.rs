@@ -1,4 +1,5 @@
-//! Security tests — ported from apps/ssh/src/shell/attacks.test.ts
+//! Security tests — ported from the original just-bash attack-surface suite
+//! (supabase-community/supabase-ssh: apps/ssh/src/shell/attacks.test.ts).
 //!
 //! Verifies that bashkit's execution limits catch abuse.
 //!
