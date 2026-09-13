@@ -309,8 +309,10 @@ impl Handler for SshHandler {
             let mut bash = create_bash(&docs_dir).await?;
             let result = match bash.exec(&command).await {
                 Ok(exec_result) => CachedResult {
-                    stdout: exec_result.stdout.clone(),
-                    stderr: exec_result.stderr.clone(),
+                    // bashkit 0.18 returns byte-native StreamData; decode to
+                    // String for the cache (docs output is UTF-8 markdown).
+                    stdout: exec_result.stdout.to_string(),
+                    stderr: exec_result.stderr.to_string(),
                     exit_code: exec_result.exit_code,
                 },
                 Err(e) => {
