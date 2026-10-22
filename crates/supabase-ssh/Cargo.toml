@@ -5,11 +5,11 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-bashkit = { version = "0.18", features = ["realfs"] }
+bashkit = { git = "https://github.com/everruns/bashkit", rev = "05c6e01c99f513775e0afd89ca1d7938aa9956c2", features = ["realfs"] }
 bytes = "1"
-lru = "0.13"
+lru = "0.18.2"
 rand = "0.9"
-russh = "0.60"
+russh = "0.60.3"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
